@@ -115,18 +115,9 @@ So (hopefully) we have now a working audio setting!
 
 ## Audio Capturing
 
-The next packages to be installed
-# does not work!
-```php
-sudo apt install python3-numpy
-sudo apt install libportaudio2 python3-cffi libasound-dev libportaudio2
-sudo apt-get install python3-scipy
-```
-* numpy → For numerical operations.
-* sounddevice → For real-time audio capture.
-* scipy → For saving .wav files and processing audio data.
-# end does not work
-# new virtual environment
+The next packages need to be installed: I tried without but using a vitual environment was finally the only way to get everything running.
+
+### new virtual environment
 Step 1: Create and Activate the Virtual Environment
 
     Navigate to your project directory (or home directory):
@@ -158,7 +149,7 @@ Step 3: Verify Installation
 
 python -c 'import sounddevice; print("Sounddevice is installed and working!")'
 
-# end virtual environment
+## Recording triggered audio
 
 Now our first Python script. 
 Copy and paste the Python code below into a file:
@@ -482,3 +473,209 @@ Cheat: if you want to use pre-recorded sounds look at
 You may either download the sounds or play them in front of your Raspberry Pi microphone...
 
 ## Training the AI
+### Install necessary libraries
+To train a sound classifier, install the required Python libraries. Again ensure that your virtual enviroment is active. This may take a while, we are talking about a >200MB download.
+
+```php
+pip install numpy librosa tensorflow scikit-learn matplotlib
+```
+### Create a feature extraction script
+We’ll use Mel-Frequency Cepstral Coefficients (MFCCs), which are effective features for sound classification.
+Save this as extract_features.py:
+```python
+import os
+import numpy as np
+import librosa
+import pickle
+
+# Adjusted paths to directories
+ROOSTER_DIR = "rooster"
+NOISE_DIR = "noise"
+FEATURES_FILE = "features.pkl"
+
+# Audio processing settings
+SAMPLE_RATE = 16000  # Ensure consistent sampling rate
+N_MFCC = 13          # Number of MFCC features
+
+def extract_features(file_path):
+    """Extract MFCC features from an audio file."""
+    try:
+        audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC)
+        return np.mean(mfccs, axis=1)  # Take the mean across the time axis
+    except Exception as e:
+        print(f"Error extracting features from {file_path}: {e}")
+        return None
+
+# Prepare dataset
+X = []  # Features
+y = []  # Labels: 1 = rooster, 0 = noise
+
+# Process rooster files
+for subdir, _, files in os.walk(ROOSTER_DIR):
+    for filename in files:
+        if filename.endswith(".wav"):
+            file_path = os.path.join(subdir, filename)
+            features = extract_features(file_path)
+            if features is not None:
+                X.append(features)
+                y.append(1)  # Label as rooster
+
+# Process noise files
+for subdir, _, files in os.walk(NOISE_DIR):
+    for filename in files:
+        if filename.endswith(".wav"):
+            file_path = os.path.join(subdir, filename)
+            features = extract_features(file_path)
+            if features is not None:
+                X.append(features)
+                y.append(0)  # Label as noise
+
+# Convert to NumPy arrays
+X = np.array(X)
+y = np.array(y)
+
+# Save extracted features
+with open(FEATURES_FILE, "wb") as f:
+    pickle.dump((X, y), f)
+
+print(f"✅ Features saved to {FEATURES_FILE}.")
+```
+
+### Train the Classifier
+
+Create a training script as train_classifier.py
+
+```python
+import pickle
+import numpy as np
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+
+# Load features
+with open("features.pkl", "rb") as f:
+    X, y = pickle.load(f)
+
+# Split dataset into training (80%) and testing (20%)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Define the neural network model
+model = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(X.shape[1],)),
+    tf.keras.layers.Dense(64, activation="relu"),
+    tf.keras.layers.Dense(32, activation="relu"),
+    tf.keras.layers.Dense(1, activation="sigmoid")  # Binary classification
+])
+
+# Compile the model
+model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=20, batch_size=8, validation_data=(X_test, y_test))
+
+# Save the model
+model.save("rooster_classifier.h5")
+print("✅ Model saved as `rooster_classifier.h5`.")
+
+# Plot training history
+plt.figure(figsize=(12, 4))
+plt.subplot(1, 2, 1)
+plt.plot(history.history["accuracy"], label="Train Accuracy")
+plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
+plt.legend()
+plt.title("Model Accuracy")
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history["loss"], label="Train Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+plt.legend()
+plt.title("Model Loss")
+
+plt.show()
+```
+
+### Predicting values
+
+Create a script to test your trained model on new audio files.
+Save this as predict.py
+```python
+import tensorflow as tf
+import librosa
+import numpy as np
+import sys
+
+MODEL_FILE = "rooster_classifier.h5"
+SAMPLE_RATE = 16000
+N_MFCC = 13
+
+# Load the trained model
+model = tf.keras.models.load_model(MODEL_FILE)
+
+def predict_audio(file_path):
+    """Predict if the audio contains a rooster or noise."""
+    try:
+        audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC)
+        features = np.mean(mfccs, axis=1).reshape(1, -1)  # Reshape for prediction
+        prediction = model.predict(features)[0][0]
+        return "Rooster 🐓" if prediction > 0.5 else "Noise 🌿"
+    except Exception as e:
+        return f"Error: {e}"
+
+# Test the model on a file
+if len(sys.argv) < 2:
+    print("Usage: python predict.py <path_to_wav_file>")
+else:
+    file_path = sys.argv[1]
+    result = predict_audio(file_path)
+    print(f"🔊 Prediction: {result}")
+```
+
+
+### Test Your Classifier
+
+Run the following commands:
+
+1. Extract Features:
+```php
+python extract_features.py
+```
+Train the Classifier:
+```php
+python train_classifier.py
+```
+Predict New Audio:
+```php
+python predict.py triggers/test.wav
+```
+Replace test.wav with a new .wav file to classify.
+
+
+
+
+
+
+
+# Helpful hints and further support
+## Activating Samba
+When I put the RasPi in my garden shed I obviously had to access it remoteley. Thus I installed Samba for an easier access.
+Check if it is already running
+```php
+sudo systemctl status smbd
+```
+If not - as it was the case for me - install it.
+```php
+sudo apt update && sudo apt install samba -y
+```
+In my case there were no samba login data (check as follows):
+```php
+pdbedit -L
+```
+So I had to add it and restart the service .
+```php
+sudo rm -f /var/lib/samba/private/passdb.tdb
+sudo smbpasswd -a <your_samba_login_password>
+sudo systemctl restart smbd nmbd
+```
+This gives us now thw opportunity to play .wav files remotely on a Mac/PC - and to create and edit python scripts directly in Visual Studio Code, which is much more convenient than via a simple terminal editor like vi or nano. And you can play even the .wav files directly withon Visual Studio Code!
