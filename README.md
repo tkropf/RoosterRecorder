@@ -652,9 +652,9 @@ python predict.py triggers/test.wav
 Replace test.wav with a new .wav file to classify.
 
 
+## perhaps needs to be inserted above 
 
-
-
+pip install noisereduce
 
 
 # Helpful hints and further support
