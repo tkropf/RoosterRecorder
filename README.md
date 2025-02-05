@@ -877,66 +877,49 @@ python train_classifier.py
 ```
 This will load features.csv, train the classifier, print an evaluation report, and save the model as rooster_classifier.pkl.
 
-### Predicting values
-
-Create a script to test your trained model on new audio files.
-Save this as predict.py
-```python
-import tensorflow as tf
-import librosa
-import numpy as np
-import sys
-
-MODEL_FILE = "rooster_classifier.h5"
-SAMPLE_RATE = 16000
-N_MFCC = 13
-
-# Load the trained model
-model = tf.keras.models.load_model(MODEL_FILE)
-
-def predict_audio(file_path):
-    """Predict if the audio contains a rooster or noise."""
-    try:
-        audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
-        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC)
-        features = np.mean(mfccs, axis=1).reshape(1, -1)  # Reshape for prediction
-        prediction = model.predict(features)[0][0]
-        return "Rooster 🐓" if prediction > 0.5 else "Noise 🌿"
-    except Exception as e:
-        return f"Error: {e}"
-
-# Test the model on a file
-if len(sys.argv) < 2:
-    print("Usage: python predict.py <path_to_wav_file>")
-else:
-    file_path = sys.argv[1]
-    result = predict_audio(file_path)
-    print(f"🔊 Prediction: {result}")
-```
-
-
-### Test Your Classifier
-
-Run the following commands:
-
-1. Extract Features:
-```php
-python extract_features.py
-```
-Train the Classifier:
+In my first run I got the following result: 
 ```php
 python train_classifier.py
+Classification Report:
+              precision    recall  f1-score   support
+
+       noise       0.93      0.97      0.95        29
+     rooster       0.98      0.96      0.97        53
+
+    accuracy                           0.96        82
+   macro avg       0.96      0.96      0.96        82
+weighted avg       0.96      0.96      0.96        82
+
+Model saved as rooster_classifier.pkl
 ```
-Predict New Audio:
-```php
-python predict.py triggers/test.wav
-```
-Replace test.wav with a new .wav file to classify.
+This was based on 248 .wav files in the rooster directory and 159 .wav files in the noise directory.
+
+### Explanation
+
+The classifier achieved a 96% overall accuracy on the test set. Which is not bad for a first shot!
+
+The classification report shows the performance on the test set . In our training script, we used an 80/20 train-test split. This means that approximately 20% of all the samples are held out for testing, and the remaining 80% are used for training.
+
+Given the total number of samples:
+
+    Rooster: 248 files
+    Noise: 159 files
+    Total: 248 + 159 = 407 files
+
+When applying a 20% test split:
+
+    Test set size ≈ 0.20 × 407 ≈ 81.4
+
+This rounds to about 82 samples, which is why the classification report shows results based on 82 test samples.
+
+### Now it is getting real
+
+* Now we create a python script for continously listening, like the trigger_audio_capture Python script which stored the 4 seconds long .wav files in recorded_events with time stamps as before.
+* In contrast to the trigger_audio_capture we immediately classify the incoming sound as rooster or noise and store it already sorted in directories rooster_ai_classified and noise_ai_classified. Thus we have "forensic evidence" of the audio events and can also check manually whether the classification was done right.
+* In addition we add each event with timestamp and classification result rooster / noise in a database for later visualization
 
 
-## perhaps needs to be inserted above 
 
-pip install noisereduce
 
 
 # Helpful hints and further support
@@ -960,4 +943,70 @@ sudo rm -f /var/lib/samba/private/passdb.tdb
 sudo smbpasswd -a <your_samba_login_password>
 sudo systemctl restart smbd nmbd
 ```
+
+And if you do want to write data to your Raspberry Pi you have to enable write permissions in Samba.
+Edit the Samba Configuration: Open the Samba configuration file on your Pi (usually located at /etc/samba/smb.conf) with an editor (e.g., sudo nano /etc/samba/smb.conf).
+Find the share section for the directory you want to copy files to. For example:
+```php
+[shared]
+    path = /path/to/your/directory
+    read only = yes
+    guest ok = no
+```
+Change read only = yes to read only = no.
+Don't forget to restart Samba and to close and reopen your Samba connection afterwards. 
+```php
+sudo systemctl restart smbd
+```
+
+
 This gives us now thw opportunity to play .wav files remotely on a Mac/PC - and to create and edit python scripts directly in Visual Studio Code, which is much more convenient than via a simple terminal editor like vi or nano. And you can play even the .wav files directly withon Visual Studio Code!
+
+## Running a script in the background
+If you want python scripts to continue running, even if you closed your ssh connect, the follwing hint might help.
+
+Using nohup (short for "no hangup") is a simple way to keep your Python script running even after you disconnect from your SSH session. Here’s how you can do it.
+
+### Activate Your Virtual Environment
+
+* First, activate your virtual environment as usual:
+```php
+source myenv/bin/activate
+```
+### Run Your Script with nohup
+
+Execute your script with nohup and send it to the background by appending & at the end:
+```php
+nohup python trigger_audio_capture.py &
+```
+* nohup: This command prevents the process from being terminated when the terminal session ends.
+* &: This puts the process in the background so you can continue using the terminal or disconnect without interrupting the script.
+
+### Redirecting Output (Optional)
+
+By default, nohup writes the output (both standard output and standard error) to a file called nohup.out in the current directory. If you prefer to redirect the output to a different file, you can do so like this:
+
+```php
+nohup python trigger_audio_capture_V11_simpler.py > output.log 2>&1 &
+```
+* > output.log: Redirects standard output to output.log.
+
+### Ending the background process
+* Find the Process ID (PID)
+  ```php
+  ps aux | grep trigger_audio_capture.py
+  ```
+* Once you have the PID, you can terminate the process with
+  ```php
+  kill <PID>
+  ```
+Example
+```php
+ps -aux | grep trigger_audio_capture.py
+verwalt+    7958  1.6  1.0 911760 88448 pts/0    Sl   09:35   6:27 python trigger_audio_capture.py
+verwalt+    9498  0.0  0.0   6384  1536 pts/0    S+   16:06   0:00 grep --color=auto trigger_audio_capture.py
+kill 7958
+# in case the process does not end use kill -9 7958
+```
+
+
