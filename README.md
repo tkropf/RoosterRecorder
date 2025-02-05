@@ -549,6 +549,159 @@ python sort_recordings.py
 
 Repeat until all files are classified.
 
+### Alternative: Manual file classification on a Mac
+
+The above approch assumes, that we run the Python script on the RaspPi. However - at least in my case - the RasPi sits in my garden shed, and currenty it is -5 degrees Celsius outside.
+
+So my alternative was 
+* to copy the directory recorded_events on my Mac (via Samba, see "Helpful Hint" section below)
+*  to run the Python script on my Mac, filling directory rooster and noise
+*  copy the sorted .wav files back into the respective directories on the RasPi
+
+This requires a slight modification of the script, which I created on my Mac and called sort_recordings_mac.py: 
+
+```python
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wav
+import time as time_module  # Renamed to avoid conflict with datetime
+import os
+from datetime import datetime
+
+# Configuration
+SAMPLE_RATE = 16000               # Sampling rate in Hz
+DURATION_PRE_TRIGGER = 0.5        # Seconds before trigger to keep (ring buffer)
+DURATION_POST_TRIGGER = 3.5       # Seconds after trigger to record
+THRESHOLD = 0.1                   # Adjust based on microphone sensitivity
+COOLDOWN_PERIOD = 2               # Seconds to wait after recording completes
+OUTPUT_DIR = "recorded_events"    # Folder to store audio files
+
+# Ensure the output directory exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Number of samples for the pre-trigger portion
+pre_trigger_samples = int(SAMPLE_RATE * DURATION_PRE_TRIGGER)
+# Initialize ring buffer with zeros.
+ring_buffer = np.zeros(pre_trigger_samples, dtype='float32')
+
+# Use next_allowed_trigger_time to enforce a full cooldown period
+next_allowed_trigger_time = 0
+
+def apply_fade_in(audio, fade_duration, sample_rate):
+    """
+    Apply a fade-in effect to the beginning of the audio.
+    This smooths out any abrupt transitions.
+    """
+    fade_samples = int(fade_duration * sample_rate)
+    fade_samples = min(fade_samples, len(audio))
+    fade_curve = np.linspace(0, 1, fade_samples)
+    audio[:fade_samples] *= fade_curve
+    return audio
+
+def apply_fade_out(audio, fade_duration, sample_rate):
+    """
+    Apply a fade-out effect to the end of the audio.
+    """
+    fade_samples = int(fade_duration * sample_rate)
+    fade_samples = min(fade_samples, len(audio))
+    fade_curve = np.linspace(1, 0, fade_samples)
+    audio[-fade_samples:] *= fade_curve
+    return audio
+
+def audio_callback(indata, frames, time_info, status):
+    """
+    Process incoming audio. When a loud sound is detected and the cooldown
+    period has passed, record an event consisting of 0.5 sec pre-trigger and
+    3.5 sec post-trigger audio.
+    """
+    global ring_buffer, next_allowed_trigger_time
+
+    if status:
+        print(f"Audio status error: {status}")
+
+    # Get the current audio chunk (first channel)
+    audio_chunk = indata[:, 0]
+    current_time = time_module.time()
+
+    # Only trigger if the threshold is exceeded and we are past the cooldown
+    if np.max(np.abs(audio_chunk)) > THRESHOLD and current_time >= next_allowed_trigger_time:
+        # Identify the first sample index that exceeds the threshold.
+        trigger_indices = np.where(np.abs(audio_chunk) > THRESHOLD)[0]
+        trigger_index = trigger_indices[0] if trigger_indices.size > 0 else 0
+
+        print("Trigger detected! Recording event...")
+
+        # --- Prepare the Pre-Trigger Audio ---
+        # The ring buffer holds the previous 0.5 sec of audio.
+        # Also include any audio from the current chunk before the trigger.
+        pre_trigger_candidate = np.concatenate((ring_buffer, audio_chunk[:trigger_index]))
+        pre_trigger_audio = pre_trigger_candidate[-pre_trigger_samples:]
+        # Apply a short fade-out to smooth the end of the pre-trigger audio.
+        pre_trigger_audio = apply_fade_out(pre_trigger_audio, fade_duration=0.02, sample_rate=SAMPLE_RATE)
+
+        # --- Prepare the Post-Trigger Audio ---
+        # Use the part of the current chunk starting from the trigger.
+        post_trigger_initial = audio_chunk[trigger_index:]
+        initial_length = len(post_trigger_initial)
+        total_post_trigger_samples = int(SAMPLE_RATE * DURATION_POST_TRIGGER)
+        remaining_samples = total_post_trigger_samples - initial_length
+
+        if remaining_samples > 0:
+            # Record additional audio to complete the post-trigger segment.
+            post_trigger_remaining = sd.rec(remaining_samples,
+                                            samplerate=SAMPLE_RATE,
+                                            channels=1,
+                                            dtype='float32')
+            sd.wait()  # Wait for recording to finish.
+            post_trigger_remaining = post_trigger_remaining.flatten()
+        else:
+            post_trigger_remaining = np.array([], dtype='float32')
+
+        # Concatenate the immediate post-trigger audio with the extra recorded part.
+        post_trigger_audio = np.concatenate((post_trigger_initial, post_trigger_remaining))
+        # Apply a short fade-in to smooth the beginning of the post-trigger audio.
+        post_trigger_audio = apply_fade_in(post_trigger_audio, fade_duration=0.02, sample_rate=SAMPLE_RATE)
+
+        # --- Combine and Save ---
+        # Final recording is 0.5 sec pre-trigger plus 3.5 sec post-trigger.
+        combined_audio = np.concatenate((pre_trigger_audio, post_trigger_audio))
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = os.path.join(OUTPUT_DIR, f"event_{timestamp}.wav")
+        # Convert audio to 16-bit PCM format.
+        wav.write(filename, SAMPLE_RATE, (combined_audio * 32767).astype(np.int16))
+        print(f"Saved: {filename}")
+
+        # --- Update the Ring Buffer ---
+        # Use the tail end of the post-trigger audio for future pre-trigger context.
+        if len(post_trigger_audio) >= pre_trigger_samples:
+            ring_buffer = post_trigger_audio[-pre_trigger_samples:]
+        else:
+            ring_buffer = post_trigger_audio.copy()
+
+        # --- Update the Cooldown Timer ---
+        # Now that recording is complete, disallow new triggers for the cooldown period.
+        next_allowed_trigger_time = time_module.time() + COOLDOWN_PERIOD
+
+        # Exit early so that the ring buffer update below does not override our settings.
+        return
+
+    # --- Normal Operation: Update the Ring Buffer ---
+    # Always keep the ring buffer containing the last 0.5 sec of audio.
+    ring_buffer = np.roll(ring_buffer, -len(audio_chunk))
+    ring_buffer[-len(audio_chunk):] = audio_chunk
+
+# --- Main Program: Start Listening ---
+print("Listening for sound triggers...")
+with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, callback=audio_callback):
+    while True:
+        time_module.sleep(0.1)  # Keep the script running
+
+```
+Execute in a similar way with 
+```php
+python sort_recordings_mac.py
+```
+
 Ideally, we have now two directories filled with positive and negative audio samples. So we can start training. 
 
 Cheat: if you want to use pre-recorded sounds look at 
@@ -563,123 +716,166 @@ You may either download the sounds or play them in front of your Raspberry Pi mi
 To train a sound classifier, install the required Python libraries. Again ensure that your virtual enviroment is active. This may take a while, we are talking about a >200MB download.
 
 ```php
-pip install numpy librosa tensorflow scikit-learn matplotlib
+pip install numpy librosa pandas tensorflow scikit-learn matplotlib
 ```
 ### Create a feature extraction script
 We’ll use Mel-Frequency Cepstral Coefficients (MFCCs), which are effective features for sound classification.
 Save this as extract_features.py:
 ```python
 import os
-import numpy as np
 import librosa
-import pickle
+import numpy as np
+import pandas as pd
 
-# Adjusted paths to directories
-ROOSTER_DIR = "rooster"
-NOISE_DIR = "noise"
-FEATURES_FILE = "features.pkl"
+# Directories containing the audio samples
+ROOSTER_DIR = 'rooster'
+NOISE_DIR = 'noise'
+OUTPUT_CSV = 'features.csv'
 
-# Audio processing settings
-SAMPLE_RATE = 16000  # Ensure consistent sampling rate
-N_MFCC = 13          # Number of MFCC features
+# Sampling rate for loading audio (our recordings are at 16 kHz)
+TARGET_SR = 16000
 
-def extract_features(file_path):
-    """Extract MFCC features from an audio file."""
+def extract_features(file_path, n_mfcc=13):
+    """
+    Extracts MFCC features from an audio file.
+    
+    Parameters:
+      file_path (str): Path to the audio file.
+      n_mfcc (int): Number of MFCC coefficients to extract.
+    
+    Returns:
+      np.ndarray: A 1D array containing the mean and standard deviation
+                  of each MFCC coefficient (length = n_mfcc*2).
+    """
     try:
-        audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
-        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC)
-        return np.mean(mfccs, axis=1)  # Take the mean across the time axis
+        # Load audio file (mono) at the target sampling rate
+        y, sr = librosa.load(file_path, sr=TARGET_SR)
+        
+        # Compute MFCCs; shape: (n_mfcc, frames)
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+        
+        # Compute the mean and standard deviation for each coefficient
+        mfccs_mean = np.mean(mfccs, axis=1)
+        mfccs_std = np.std(mfccs, axis=1)
+        
+        # Concatenate the mean and std vectors to form the feature vector
+        features = np.concatenate((mfccs_mean, mfccs_std))
     except Exception as e:
-        print(f"Error extracting features from {file_path}: {e}")
+        print(f"Error processing {file_path}: {e}")
         return None
+    return features
 
-# Prepare dataset
-X = []  # Features
-y = []  # Labels: 1 = rooster, 0 = noise
-
-# Process rooster files
-for subdir, _, files in os.walk(ROOSTER_DIR):
-    for filename in files:
-        if filename.endswith(".wav"):
-            file_path = os.path.join(subdir, filename)
+def process_directory(directory, label, data_list, label_list):
+    """
+    Processes all WAV files in a directory, extracting features and appending
+    them along with the provided label.
+    
+    Parameters:
+      directory (str): Path to the directory.
+      label (str): Label to assign to all files in this directory.
+      data_list (list): List to append the feature vectors.
+      label_list (list): List to append the labels.
+    """
+    for file in os.listdir(directory):
+        if file.lower().endswith('.wav'):
+            file_path = os.path.join(directory, file)
             features = extract_features(file_path)
             if features is not None:
-                X.append(features)
-                y.append(1)  # Label as rooster
+                data_list.append(features)
+                label_list.append(label)
 
-# Process noise files
-for subdir, _, files in os.walk(NOISE_DIR):
-    for filename in files:
-        if filename.endswith(".wav"):
-            file_path = os.path.join(subdir, filename)
-            features = extract_features(file_path)
-            if features is not None:
-                X.append(features)
-                y.append(0)  # Label as noise
+# Lists to hold feature vectors and labels
+features_data = []
+labels = []
 
-# Convert to NumPy arrays
-X = np.array(X)
-y = np.array(y)
+# Process the two directories
+process_directory(ROOSTER_DIR, 'rooster', features_data, labels)
+process_directory(NOISE_DIR, 'noise', features_data, labels)
 
-# Save extracted features
-with open(FEATURES_FILE, "wb") as f:
-    pickle.dump((X, y), f)
+# Convert the lists to NumPy arrays for further processing
+features_data = np.array(features_data)
+labels = np.array(labels)
 
-print(f"✅ Features saved to {FEATURES_FILE}.")
+# Create column names (first half: MFCC means, second half: MFCC stds)
+n_features = features_data.shape[1]
+n_mfcc = n_features // 2
+columns = [f"mfcc_{i+1}_mean" for i in range(n_mfcc)] + [f"mfcc_{i+1}_std" for i in range(n_mfcc)]
+
+# Create a DataFrame and add the label column
+df = pd.DataFrame(features_data, columns=columns)
+df['label'] = labels
+
+# Save the features to a CSV file
+df.to_csv(OUTPUT_CSV, index=False)
+print(f"Feature extraction completed. Features saved to {OUTPUT_CSV}")
 ```
+### How the Script Works
+* Audio Loading & Feature Extraction:
+  * Each WAV file is loaded at a 16 kHz sampling rate.
+  * The script computes 13 MFCC coefficients for each file.
+  * For each MFCC coefficient, it calculates the mean and standard deviation over all time frames, resulting in a fixed-length feature vector of size 26 per file.
+  * Features from files in the rooster directory are labeled "rooster" and those from noise are labeled "noise".
+  * All extracted features and corresponding labels are stored in a Pandas DataFrame and then written to a CSV file (features.csv).
+* Next Steps:
+  * The resulting CSV file can be used in the training stage of your AI classifier, either by loading it into a machine learning framework (e.g., scikit-learn, TensorFlow, or PyTorch) or by further processing the features as needed.
+
+Run it
+```php
+python extract_features.py
+```
+If your terminal shows something like
+```php
+Feature extraction completed. Features saved to features.csv
+```
+then we have successfully created a features file.
 
 ### Train the Classifier
 
 Create a training script as train_classifier.py
 
 ```python
-import pickle
-import numpy as np
-import tensorflow as tf
+import pandas as pd
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from sklearn.preprocessing import LabelEncoder
+import pickle
 
-# Load features
-with open("features.pkl", "rb") as f:
-    X, y = pickle.load(f)
+# Load the extracted features from CSV
+df = pd.read_csv("features.csv")
 
-# Split dataset into training (80%) and testing (20%)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Separate features and labels
+X = df.drop("label", axis=1)
+y = df["label"]
 
-# Define the neural network model
-model = tf.keras.Sequential([
-    tf.keras.layers.Input(shape=(X.shape[1],)),
-    tf.keras.layers.Dense(64, activation="relu"),
-    tf.keras.layers.Dense(32, activation="relu"),
-    tf.keras.layers.Dense(1, activation="sigmoid")  # Binary classification
-])
+# Encode the labels (e.g., 'rooster' and 'noise') to numeric values
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
 
-# Compile the model
-model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+# Split the data into training and testing sets (e.g., 80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
 
-# Train the model
-history = model.fit(X_train, y_train, epochs=20, batch_size=8, validation_data=(X_test, y_test))
+# Initialize and train a Random Forest classifier
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(X_train, y_train)
 
-# Save the model
-model.save("rooster_classifier.h5")
-print("✅ Model saved as `rooster_classifier.h5`.")
+# Evaluate the classifier on the test set
+y_pred = clf.predict(X_test)
+print("Classification Report:")
+print(classification_report(y_test, y_pred, target_names=le.classes_))
 
-# Plot training history
-plt.figure(figsize=(12, 4))
-plt.subplot(1, 2, 1)
-plt.plot(history.history["accuracy"], label="Train Accuracy")
-plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
-plt.legend()
-plt.title("Model Accuracy")
+# Save the trained model and the label encoder for later use on the Raspberry Pi
+model_filename = "rooster_classifier.pkl"
+with open(model_filename, "wb") as f:
+    pickle.dump((clf, le), f)
 
-plt.subplot(1, 2, 2)
-plt.plot(history.history["loss"], label="Train Loss")
-plt.plot(history.history["val_loss"], label="Validation Loss")
-plt.legend()
-plt.title("Model Loss")
-
-plt.show()
+print(f"Model saved as {model_filename}")
 ```
+Run the training script 
+```python
+python train_classifier.py
+```
+This will load features.csv, train the classifier, print an evaluation report, and save the model as rooster_classifier.pkl.
 
 ### Predicting values
 
