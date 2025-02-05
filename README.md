@@ -918,9 +918,302 @@ This rounds to about 82 samples, which is why the classification report shows re
 * In contrast to the trigger_audio_capture we immediately classify the incoming sound as rooster or noise and store it already sorted in directories rooster_ai_classified and noise_ai_classified. Thus we have "forensic evidence" of the audio events and can also check manually whether the classification was done right.
 * In addition we add each event with timestamp and classification result rooster / noise in a database for later visualization
 
+We will use an sql database, hence we have to install SQLite. The last command checks, whether it was properly installed. If so, you get the version number.
+```php
+sudo apt update
+sudo apt install sqlite3
+sqlite3 --version
+```
+
+Below is a complete Python script (which you might call, for example, ai_audio_classifier.py) that builds on our previous work. It continuously listens for audio events, saves a 4‑second event when the trigger is hit, classifies the event (including reporting a confidence score), moves the file into a sorted directory, and logs the event with its timestamp, predicted label, and confidence into an SQLite database.
+
+You’ll need to have already trained your classifier and saved it as rooster_classifier.pkl. Also, install the dependencies (e.g., via pip install sounddevice numpy scipy librosa scikit-learn sqlite3—note that sqlite3 is part of Python’s standard library).
+
+```python
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wav
+import time as time_module
+import os
+from datetime import datetime
+import pickle
+import sqlite3
+import librosa
+
+# ================================
+# Configuration
+# ================================
+SAMPLE_RATE = 16000               # Sampling rate in Hz
+DURATION_PRE_TRIGGER = 0.5        # Seconds before trigger to keep (ring buffer)
+DURATION_POST_TRIGGER = 3.5       # Seconds after trigger to record
+THRESHOLD = 0.1                   # Threshold for triggering
+COOLDOWN_PERIOD = 2               # Seconds to wait after recording completes
+
+# Directories for saving files
+RECORD_DIR = "recorded_events"          # Temporary storage of raw events
+ROOSTER_DIR = "rooster_ai_classified"     # Classified as rooster
+NOISE_DIR = "noise_ai_classified"         # Classified as noise
+
+# Database file for logging events
+DB_FILE = "classification_events.db"
+
+# ================================
+# Setup Directories & Database
+# ================================
+os.makedirs(RECORD_DIR, exist_ok=True)
+os.makedirs(ROOSTER_DIR, exist_ok=True)
+os.makedirs(NOISE_DIR, exist_ok=True)
+
+# Initialize SQLite database (creates table if not exists) with check_same_thread=False
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT,
+        label TEXT,
+        confidence REAL,
+        file_path TEXT
+    )
+''')
+conn.commit()
 
 
+# ================================
+# Load Pre-trained Classifier
+# ================================
+with open("rooster_classifier.pkl", "rb") as f:
+    clf, le = pickle.load(f)
 
+# ================================
+# Initialize Audio Ring Buffer & Cooldown
+# ================================
+pre_trigger_samples = int(SAMPLE_RATE * DURATION_PRE_TRIGGER)
+ring_buffer = np.zeros(pre_trigger_samples, dtype='float32')
+next_allowed_trigger_time = 0
+
+# ================================
+# Helper Functions
+# ================================
+def apply_fade_in(audio, fade_duration, sample_rate):
+    """Apply a fade-in effect to the beginning of the audio."""
+    fade_samples = int(fade_duration * sample_rate)
+    fade_samples = min(fade_samples, len(audio))
+    fade_curve = np.linspace(0, 1, fade_samples)
+    audio[:fade_samples] *= fade_curve
+    return audio
+
+def apply_fade_out(audio, fade_duration, sample_rate):
+    """Apply a fade-out effect to the end of the audio."""
+    fade_samples = int(fade_duration * sample_rate)
+    fade_samples = min(fade_samples, len(audio))
+    fade_curve = np.linspace(1, 0, fade_samples)
+    audio[-fade_samples:] *= fade_curve
+    return audio
+
+def extract_features_from_audio_array(y, sr, n_mfcc=13):
+    """
+    Extracts MFCC features from an audio array.
+    Returns a feature vector (concatenated means and std deviations).
+    """
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+    mfccs_mean = np.mean(mfccs, axis=1)
+    mfccs_std = np.std(mfccs, axis=1)
+    features = np.concatenate((mfccs_mean, mfccs_std))
+    return features
+
+def classify_audio(file_path):
+    """
+    Loads an audio file, extracts features, and classifies it.
+    Returns the predicted label and the confidence score.
+    """
+    # Load audio file (mono) with the target sample rate
+    y, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+    features = extract_features_from_audio_array(y, sr)
+    features = features.reshape(1, -1)
+    prediction = clf.predict(features)[0]
+    proba = clf.predict_proba(features)[0]
+    confidence = np.max(proba)  # highest probability as confidence
+    label = le.inverse_transform([prediction])[0]
+    return label, confidence
+
+# ================================
+# Audio Callback Function
+# ================================
+def audio_callback(indata, frames, time_info, status):
+    global ring_buffer, next_allowed_trigger_time
+
+    if status:
+        print(f"Audio status error: {status}")
+
+    # Get current audio chunk from the first channel
+    audio_chunk = indata[:, 0]
+    current_time = time_module.time()
+
+    # Update ring buffer continuously with the latest audio chunk
+    ring_buffer = np.roll(ring_buffer, -len(audio_chunk))
+    ring_buffer[-len(audio_chunk):] = audio_chunk
+
+    # Check if any sample in the chunk exceeds the threshold and cooldown has passed
+    if np.max(np.abs(audio_chunk)) > THRESHOLD and current_time >= next_allowed_trigger_time:
+        # Determine the trigger sample index
+        trigger_indices = np.where(np.abs(audio_chunk) > THRESHOLD)[0]
+        trigger_index = trigger_indices[0] if trigger_indices.size > 0 else 0
+        print("Trigger detected! Recording event...")
+
+        # --- Prepare Pre-trigger Audio ---
+        pre_trigger_candidate = np.concatenate((ring_buffer, audio_chunk[:trigger_index]))
+        pre_trigger_audio = pre_trigger_candidate[-pre_trigger_samples:]
+        pre_trigger_audio = apply_fade_out(pre_trigger_audio, fade_duration=0.02, sample_rate=SAMPLE_RATE)
+
+        # --- Record Post-trigger Audio ---
+        post_trigger_initial = audio_chunk[trigger_index:]
+        initial_length = len(post_trigger_initial)
+        total_post_trigger_samples = int(SAMPLE_RATE * DURATION_POST_TRIGGER)
+        remaining_samples = total_post_trigger_samples - initial_length
+
+        if remaining_samples > 0:
+            post_trigger_remaining = sd.rec(remaining_samples,
+                                            samplerate=SAMPLE_RATE,
+                                            channels=1,
+                                            dtype='float32')
+            sd.wait()  # Wait until recording is complete
+            post_trigger_remaining = post_trigger_remaining.flatten()
+        else:
+            post_trigger_remaining = np.array([], dtype='float32')
+
+        post_trigger_audio = np.concatenate((post_trigger_initial, post_trigger_remaining))
+        post_trigger_audio = apply_fade_in(post_trigger_audio, fade_duration=0.02, sample_rate=SAMPLE_RATE)
+
+        # --- Combine Pre- and Post-trigger Audio ---
+        combined_audio = np.concatenate((pre_trigger_audio, post_trigger_audio))
+
+        # Save the event as a WAV file in the temporary record directory
+        timestamp_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+        file_name = f"event_{timestamp_str}.wav"
+        file_path = os.path.join(RECORD_DIR, file_name)
+        wav.write(file_path, SAMPLE_RATE, (combined_audio * 32767).astype(np.int16))
+        print(f"Saved raw event: {file_path}")
+
+        # --- Classify the Recorded Audio ---
+        label, confidence = classify_audio(file_path)
+        print(f"Classification result: {label} with confidence {confidence:.2f}")
+
+        # --- Move the File to the Appropriate Classified Directory ---
+        if label.lower() == "rooster":
+            target_dir = ROOSTER_DIR
+        else:
+            target_dir = NOISE_DIR
+        target_path = os.path.join(target_dir, file_name)
+        os.rename(file_path, target_path)
+        print(f"Moved file to: {target_path}")
+
+        # --- Log the Event in the Database ---
+        event_timestamp = datetime.now().isoformat()
+        cursor.execute("INSERT INTO events (timestamp, label, confidence, file_path) VALUES (?, ?, ?, ?)", 
+                       (event_timestamp, label, confidence, target_path))
+        conn.commit()
+
+        # Update the ring buffer with the tail end of the post-trigger audio
+        if len(post_trigger_audio) >= pre_trigger_samples:
+            ring_buffer = post_trigger_audio[-pre_trigger_samples:]
+        else:
+            ring_buffer = post_trigger_audio.copy()
+
+        # Set cooldown timer to avoid immediate re-triggering
+        next_allowed_trigger_time = time_module.time() + COOLDOWN_PERIOD
+        return
+
+# ================================
+# Main Loop: Start Listening
+# ================================
+print("Listening for sound triggers...")
+with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, callback=audio_callback):
+    while True:
+        time_module.sleep(0.1)
+```
+
+### How This Script Works
+1. Continuous Listening & Triggering:
+* The script uses a ring buffer to store the last 0.5 seconds of audio.
+* When the amplitude exceeds a set threshold and the cooldown has passed, it captures 0.5 seconds of pre‑trigger audio and 3.5 seconds of post‑trigger audio.
+2. Audio Processing & Smoothing:
+* A short fade‑out is applied to the pre‑trigger audio, and a fade‑in is applied to the post‑trigger segment to smooth the transition.
+3. Classification:
+* The captured 4‑second audio event is saved as a WAV file.
+* The script then loads the file using librosa, extracts MFCC-based features, and classifies it using your pre‑trained model.
+* It also obtains a confidence score from the classifier (using predict_proba).
+4. Sorted Storage & Logging:
+* The event file is moved to either rooster_ai_classified or noise_ai_classified based on the classification.
+* A record containing the timestamp, predicted label, confidence score, and file path is inserted into an SQLite database (classification_events.db) for later visualization and audit.
+
+This approach gives you real‑time classification with "forensic evidence" (i.e. stored audio files) and a log of events that you can later analyze or visualize. 
+
+Hint
+You also saw warnings like:
+```php
+UserWarning: X does not have valid feature names, but RandomForestClassifier was fitted with feature names
+```
+These warnings are generated by scikit-learn when the feature array passed to the classifier does not have column names. Since you're working with a NumPy array (which doesn’t have feature names) and your classifier was trained with a Pandas DataFrame (with feature names), scikit-learn issues a warning. In this context, it's generally safe to ignore the warning as long as the order of the features is consistent.
+
+## Accessing the SQLite Database
+The script stores audio classification events in an SQLite database named classification_events.db. Each event corresponds to an audio recording and is logged with the following columns:
+
+* id (INTEGER, PRIMARY KEY): A unique identifier for each event.
+* timestamp (TEXT): The date and time when the event was recorded.
+* label (TEXT): The classification result ("rooster" or "noise").
+* confidence (REAL): The confidence score of the classification (between 0 and 1).
+* file_path (TEXT): The path to the classified audio file (either in rooster_ai_classified/ or noise_ai_classified/).
+
+### How to retrieve data
+If you just want to check what’s in the database, you can open the SQLite shell and run queries.
+1. View All Events in the Database
+* Open the terminal and start SQLite:
+
+```php
+sqlite3 classification_events.db
+```
+* Show all stored events:
+```php
+SELECT * FROM events;
+```
+* Exit SQLite:
+```php
+    .exit
+```
+2. Export Events to a CSV File
+
+To get all logged events as a CSV table, you can use the following Python script:
+```python
+import sqlite3
+import pandas as pd
+
+# Connect to the database
+DB_FILE = "classification_events.db"
+conn = sqlite3.connect(DB_FILE)
+
+# Load data into a Pandas DataFrame
+query = "SELECT * FROM events"
+df = pd.read_sql(query, conn)
+
+# Save as CSV
+output_csv = "classification_events.csv"
+df.to_csv(output_csv, index=False)
+
+print(f"Exported database to {output_csv}")
+
+# Close the database connection
+conn.close()
+```
+Run this script using:
+
+```php
+python export_events.py
+```
+This will create a CSV file (classification_events.csv) with all recorded events, which you can then open in Excel, Numbers, or any text editor.
+
+Pause for a moment. Sit back and relax. Isn`t this a real WOW? We have created our own AI audio classification machine. 
+We should be proud!
 
 # Helpful hints and further support
 ## Activating Samba
