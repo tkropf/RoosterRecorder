@@ -2746,5 +2746,14 @@ verwalt+    9498  0.0  0.0   6384  1536 pts/0    S+   16:06   0:00 grep --color=
 kill 7958
 # in case the process does not end use kill -9 7958
 ```
+# Sponsorship and Gratefulness
+
+If you want to show your appreciation for this documentation, please consider gifting a small amount to Primavera. This is a great charity organization, orriginated by Bosch employees:
+Visit PRIMAVERA (https://www.primavera-ev.de/) for more information.
+
+Spendenkonto: 
+* IBAN: DE33600501017871502417
+* BIC: SOLADEST600
+* Baden-Württembergische Bank, Kleiner Schlossplatz 11, 70173 Stuttgart
 
 
