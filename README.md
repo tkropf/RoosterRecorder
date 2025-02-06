@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Raspberry Pi project to classify and track dedicated sound events - using a rooster cry as an example
+A Raspberry Pi project to classify and track dedicated sound events - using a rooster crow as an example
 
 This is a toy project which has the following goals:
 * create a Raspberry Pi based device which automatically monitors, classifies and tracks dedicated sound events based on a lightweight AI approach
@@ -383,7 +383,7 @@ No (classical) AI without training data. So let's create samples to be classifie
 First, put the Raspberry Pi with the microphone at the "crime scene", i.e., close to the area where the sound events happen. Then trigger our recording script. You may have to fine tune again the trigger conditions as described before. 
 In my case I am lucky as I can put the Raspberry Pi in my garden but still within reach of my Wifi network. So I can make the adjustments out of my cosy office :-)
 
-Let it run such than you get ideally more than 50 recordings eache, e.g., rooster cries vs. car sounds etc. These recordings are then stored in our diretory 'recorded_event'.
+Let it run such than you get ideally more than 50 recordings eache, e.g., rooster crows vs. car sounds etc. These recordings are then stored in our diretory 'recorded_event'.
 
 Now we have to classify them manually. Means: using a helping python script.
 
@@ -1233,7 +1233,508 @@ If you ever want to optimize, extend, or visualize the data, here are some next 
 🔹 Power Efficiency: Run it on a battery/solar setup for long-term monitoring.
 
 We have created our own AI audio classification machine. 
-We should be proud!
+🚀 HIGH-FIVE from the digital side! ✋😃
+
+# Visualization
+Who just wants to collect data and analysis results without visualizing them?
+Thus, let's build on the trogue of data we created (in my case 300-4000 rooster crows per day)
+
+## Step 1: Flask Backend Setup
+
+We’ll:
+
+1. Install Flask (if not installed).
+2. Create a Flask app that exposes an API to fetch classification data.
+3. Test the API from a browser or curl before moving to visualization.
+
+### 1. Install Flask on the Raspberry Pi
+
+Run this inside your virtual environment (myenv):
+```php
+pip install flask flask-cors 
+```
+* flask: The web framework.
+* flask-cors: Allows browser-based access (optional for local use).
+
+ ### 2. Create dashboard_backend.py
+
+This Flask app will:
+
+* Serve an API endpoint (/api/daily_counts) to return rooster crow counts per hour.
+* Serve another endpoint (/api/weekly_counts) for rooster crows per day.
+```python
+from flask import Flask, jsonify
+import sqlite3
+from datetime import datetime
+
+app = Flask(__name__)
+
+DB_FILE = "classification_events.db"
+
+def query_db(query, args=(), one=False):
+    """Helper function to query SQLite database."""
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute(query, args)
+    result = cursor.fetchall()
+    conn.close()
+    return (result[0] if result else None) if one else result
+
+@app.route("/api/daily_counts")
+def daily_counts():
+    """Returns rooster crows per hour for the current day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    query = """
+        SELECT strftime('%H', timestamp) AS hour, COUNT(*)
+        FROM events
+        WHERE label = 'rooster' AND timestamp LIKE ?
+        GROUP BY hour
+        ORDER BY hour;
+    """
+    results = query_db(query, (today + "%",))
+    return jsonify({hour: count for hour, count in results})
+
+@app.route("/api/weekly_counts")
+def weekly_counts():
+    """Returns rooster crows per day for the past 7 days."""
+    query = """
+        SELECT strftime('%Y-%m-%d', timestamp) AS day, COUNT(*)
+        FROM events
+        WHERE label = 'rooster' AND timestamp >= date('now', '-6 days')
+        GROUP BY day
+        ORDER BY day;
+    """
+    results = query_db(query)
+    return jsonify({day: count for day, count in results})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
+```
+
+### 3. Run & Test the Flask Backend
+
+Start the server:
+```php
+nohup python dashboard_backend.py > backend.log 2>&1 &
+```
+* Runs Flask in the background.
+* Redirects output to backend.log for debugging.
+
+Now, test the API from a browser (or use curl):
+
+* Check daily counts:
+    Open:
+```php
+http://<YOUR_RASPBERRY_PI_IP>:5000/api/daily_counts
+```
+Expected JSON response:
+```json
+{"00": 2, "07": 5, "12": 3}
+```
+Check weekly counts:
+```php
+http://<YOUR_RASPBERRY_PI_IP>:5000/api/weekly_counts
+```
+Expected JSON response:
+```json
+{"2025-02-01": 7, "2025-02-02": 10, "2025-02-03": 12}
+```
+
+## Step 2: Create a Simple Web Page to Test API Integration
+
+We'll start with a basic HTML + JavaScript page that:
+
+* Fetches daily and weekly counts from the API.
+* Displays the data as raw text (just to confirm API connectivity).
+* Runs locally on the Raspberry Pi, accessible via a web browser.
+
+### 1. Create dashboard.html on the Raspberry Pi
+
+Save the following file in the same directory as your Flask server (dashboard_backend.py):
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rooster Dashboard</title>
+    <script>
+        async function fetchData() {
+            try {
+                // Fetch daily counts
+                let dailyResponse = await fetch("/api/daily_counts");
+                let dailyData = await dailyResponse.json();
+                document.getElementById("dailyOutput").innerText = JSON.stringify(dailyData, null, 2);
+
+                // Fetch weekly counts
+                let weeklyResponse = await fetch("/api/weekly_counts");
+                let weeklyData = await weeklyResponse.json();
+                document.getElementById("weeklyOutput").innerText = JSON.stringify(weeklyData, null, 2);
+            } catch (error) {
+                console.error("Error fetching data:", error);
+                document.getElementById("errorOutput").innerText = "Failed to load data.";
+            }
+        }
+    </script>
+</head>
+<body onload="fetchData()">
+    <h1>Rooster Crow Dashboard (Testing API)</h1>
+    
+    <h2>Daily Counts (Crows per Hour)</h2>
+    <pre id="dailyOutput">Loading...</pre>
+
+    <h2>Weekly Counts (Crows per Day)</h2>
+    <pre id="weeklyOutput">Loading...</pre>
+
+    <h3 id="errorOutput" style="color: red;"></h3>
+</body>
+</html>
+```
+### 2. Serve the Web Page Using Flask
+
+Modify your dashboard_backend.py to serve the HTML page:
+```python
+from flask import Flask, jsonify, send_from_directory
+import sqlite3
+from datetime import datetime
+import os
+
+app = Flask(__name__)
+
+DB_FILE = "classification_events.db"
+
+def query_db(query, args=(), one=False):
+    """Helper function to query SQLite database."""
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute(query, args)
+    result = cursor.fetchall()
+    conn.close()
+    return (result[0] if result else None) if one else result
+
+@app.route("/")
+def serve_dashboard():
+    """Serves the dashboard HTML file."""
+    return send_from_directory(os.path.dirname(__file__), "dashboard.html")
+
+@app.route("/api/daily_counts")
+def daily_counts():
+    """Returns rooster crows per hour for the current day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    query = """
+        SELECT strftime('%H', timestamp) AS hour, COUNT(*)
+        FROM events
+        WHERE label = 'rooster' AND timestamp LIKE ?
+        GROUP BY hour
+        ORDER BY hour;
+    """
+    results = query_db(query, (today + "%",))
+    return jsonify({hour: count for hour, count in results})
+
+@app.route("/api/weekly_counts")
+def weekly_counts():
+    """Returns rooster crows per day for the past 7 days."""
+    query = """
+        SELECT strftime('%Y-%m-%d', timestamp) AS day, COUNT(*)
+        FROM events
+        WHERE label = 'rooster' AND timestamp >= date('now', '-6 days')
+        GROUP BY day
+        ORDER BY day;
+    """
+    results = query_db(query)
+    return jsonify({day: count for day, count in results})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+```
+### 3. Restart the Flask Server
+
+Stop the running instance of dashboard_backend.py and restart it:
+```bash
+pkill -f dashboard_backend.py  # Stop previous instance
+nohup python dashboard_backend.py > backend.log 2>&1 &
+```
+### 4. Open the Dashboard in Your Browser
+
+Go to:
+```php
+http://raspberrypi.local:5000/
+```
+(Or use your Pi's IP: http://<YOUR_PI_IP>:5000/)
+
+✅ If everything works, you should see JSON data displayed inside the web page.
+✅ This confirms that API calls are working inside a browser.
+
+## Step 3: Adding Bar Charts 📊🔥
+### 1. Modify dashboard.html to Include Chart.js
+
+Replace your existing dashboard.html with the following updated version:
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rooster Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Chart.js -->
+    <script>
+        async function fetchData() {
+            try {
+                // Fetch daily counts
+                let dailyResponse = await fetch("/api/daily_counts");
+                let dailyData = await dailyResponse.json();
+                updateDailyChart(dailyData);
+
+                // Fetch weekly counts
+                let weeklyResponse = await fetch("/api/weekly_counts");
+                let weeklyData = await weeklyResponse.json();
+                updateWeeklyChart(weeklyData);
+
+            } catch (error) {
+                console.error("Error fetching data:", error);
+                document.getElementById("errorOutput").innerText = "Failed to load data.";
+            }
+        }
+
+        function updateDailyChart(data) {
+            const labels = Object.keys(data).map(hour => `${String(parseInt(hour)).padStart(2, '0')}:00`);
+            const values = Object.values(data);
+            const ctx = document.getElementById("dailyChart").getContext("2d");
+
+            new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: "Rooster Crows per Hour",
+                        data: values,
+                        backgroundColor: "rgba(255, 99, 132, 0.5)",
+                        borderColor: "rgba(255, 99, 132, 1)",
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function updateWeeklyChart(data) {
+            const labels = Object.keys(data);
+            const values = Object.values(data);
+            const ctx = document.getElementById("weeklyChart").getContext("2d");
+
+            new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: "Rooster Crows per Day",
+                        data: values,
+                        backgroundColor: "rgba(54, 162, 235, 0.5)",
+                        borderColor: "rgba(54, 162, 235, 1)",
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+    </script>
+</head>
+<body onload="fetchData()">
+    <h1>Rooster Crow Dashboard</h1>
+    
+    <h2>Daily Rooster Crows (Hour-wise)</h2>
+    <canvas id="dailyChart" width="400" height="200"></canvas>
+
+    <h2>Weekly Rooster Crows (Day-wise)</h2>
+    <canvas id="weeklyChart" width="400" height="200"></canvas>
+
+    <h3 id="errorOutput" style="color: red;"></h3>
+</body>
+</html>
+```
+### 2. Restart the Flask Server
+
+Stop the running instance of dashboard_backend.py and restart it:
+```bash
+pkill -f dashboard_backend.py  # Stop previous instance
+nohup python dashboard_backend.py > backend.log 2>&1 &
+```
+### 3. Open the Dashboard in Your Browser
+
+Go to:
+```php
+http://raspberrypi.local:5000/
+```
+(Or use your Pi’s IP)
+
+You should see two bar charts:
+
+* Daily Rooster Crows (per Hour)
+* Weekly Rooster Crows (per Day)
+
+Everything should work now! 📊🐓
+
+# Visualization: Next level with REACT
+React will give us a more dynamic, scalable, and modern dashboard. 🚀
+We will staret from scratch with a clean React project. This will allow you to:
+
+✅ Understand the core concepts (React components, state, API calls).
+✅ Keep full control over customization as the project evolves.
+✅ Ensure smooth integration with your Flask backend step by step.
+
+We'll: 
+1. Set up a React app on your Raspberry Pi.
+2. Integrate Flask as the backend (keeping /api/daily_counts & /api/weekly_counts).
+3. Fetch data & display interactive charts using Recharts.js.
+
+## Step 1: Set Up React on Your Raspberry Pi 🚀
+
+We’ll start by installing Node.js & npm and creating a new React app.
+
+### 1. Install Node.js & npm
+Node.js is required to run React. Install it using the following commands:
+
+```bash
+sudo apt update
+sudo apt install nodejs npm -y
+```
+Verify installation
+```bash
+node -v
+npm -v
+```
+You should see version numbers, e.g., v18.x.x for Node.js and 8.x.x for npm.
+
+### 2. Create a New React Project
+
+Navigate to the directory where you want your project:
+```bash
+cd ~  # Or choose another location
+npx create-react-app rooster-dashboard
+```
+This will:
+* Set up a new React project in the rooster-dashboard folder.
+* Install all required dependencies.
+
+If npx is missing, install it with:
+```bash
+npm install -g npx
+```
+### 3. Start the React App
+
+Move into the project folder and start the development server:
+```bash
+cd rooster-dashboard
+npm start
+```
+This should:
+
+* Start a local development server on port 3000.
+* Open a blank React app.
+
+### 4. Access the React App
+
+Open a browser and go to:
+```php
+http://raspberrypi.local:3000/
+```
+(or use your Pi's IP: http://<YOUR_PI_IP>:3000/)
+
+You should see the default React starter page. 🎉
+
+## Step 2: Connecting React to the Flask API
+
+Now that the React app is running, let’s: 
+✅ Connect it to the Flask API (/api/daily_counts & /api/weekly_counts).
+✅ Display the data in the browser as a simple text list.
+
+### 1. tep 1: Modify App.js to Fetch Data
+
+Open src/App.js and replace its contents with the following:
+
+```javascript
+import React, { useEffect, useState } from "react";
+
+function App() {
+  const [dailyCounts, setDailyCounts] = useState(null);
+  const [weeklyCounts, setWeeklyCounts] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        let dailyResponse = await fetch(`http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`);
+        let dailyData = await dailyResponse.json();
+
+        // Convert object to sorted array
+        let sortedDailyData = Object.entries(dailyData)
+          .map(([hour, count]) => ({ hour: parseInt(hour), count }))
+          .sort((a, b) => a.hour - b.hour);
+
+        setDailyCounts(sortedDailyData);
+
+        let weeklyResponse = await fetch(`http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`);
+        let weeklyData = await weeklyResponse.json();
+        setWeeklyCounts(weeklyData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h1>🐓 Rooster Crow Dashboard</h1>
+
+      {error && <p style={{ color: "red" }}>❌ Error: {error}</p>}
+
+      <h2>📊 Daily Rooster Crows (Hour-wise)</h2>
+      {dailyCounts ? (
+        <ul>
+          {dailyCounts.map((entry) => (
+            <li key={entry.hour}>{`${entry.hour}:00 → ${entry.count} crows`}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      <h2>📆 Weekly Rooster Crows (Day-wise)</h2>
+      {weeklyCounts ? (
+        <ul>
+          {Object.entries(weeklyCounts).map(([day, count]) => (
+            <li key={day}>{`${day}: ${count} crows`}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>Loading...</p>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
+Restart React
+```php
+npm start
+```
+You should see now a "Rooster Crow Dashboard" with actual textual information about daily and weekly rooster crows. 
+
+
 
 # Helpful hints and further support
 ## Activating Samba
