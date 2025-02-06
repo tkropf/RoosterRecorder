@@ -1659,7 +1659,7 @@ Now that the React app is running, let’s:
 ✅ Connect it to the Flask API (/api/daily_counts & /api/weekly_counts).
 ✅ Display the data in the browser as a simple text list.
 
-### 1. tep 1: Modify App.js to Fetch Data
+## Step 3: Modify App.js to Fetch Data
 
 Open src/App.js and replace its contents with the following:
 
@@ -1728,12 +1728,872 @@ function App() {
 
 export default App;
 ```
+### Test 
+
 Restart React
 ```php
 npm start
 ```
 You should see now a "Rooster Crow Dashboard" with actual textual information about daily and weekly rooster crows. 
 
+## Adding Bar Charts to React
+
+### Step 1: Install Recharts for Bar Charts
+
+We will use Recharts.js to create bar charts for daily and weekly rooster counts.
+
+* Navigate to your React project directory:
+```bash
+cd ~/programming/rooster-dashboard
+```
+* Install Recharts:
+```bash
+npm install recharts
+```
+### Step 2: Update App.js to Include Bar Charts
+
+We will use BarChart from Recharts and replace the text-based list with visual bar charts.
+* Replace your current App.js with this version:
+```javascript
+import React, { useEffect, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
+
+function App() {
+  const [dailyCounts, setDailyCounts] = useState(null);
+  const [weeklyCounts, setWeeklyCounts] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        let dailyResponse = await fetch(`http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`);
+        let dailyData = await dailyResponse.json();
+
+        let sortedDailyData = Object.entries(dailyData)
+          .map(([hour, count]) => ({ hour: `${hour}:00`, count })) // Keep hour as string for x-axis
+          .sort((a, b) => parseInt(a.hour) - parseInt(b.hour)); // Sort numerically
+
+        setDailyCounts(sortedDailyData);
+
+        let weeklyResponse = await fetch(`http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`);
+        let weeklyData = await weeklyResponse.json();
+
+        let formattedWeeklyData = Object.entries(weeklyData)
+          .map(([day, count]) => ({ day, count })); // Keep date format for x-axis
+
+        setWeeklyCounts(formattedWeeklyData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h1>🐓 Rooster Crow Dashboard</h1>
+
+      {error && <p style={{ color: "red" }}>❌ Error: {error}</p>}
+
+      {/* DAILY CROW BAR CHART */}
+      <h2>📊 Daily Rooster Crows (Hour-wise)</h2>
+      {dailyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={dailyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#8884d8" name="Crows per Hour" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* WEEKLY CROW BAR CHART */}
+      <h2>📆 Weekly Rooster Crows (Day-wise)</h2>
+      {weeklyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={weeklyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="day" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#82ca9d" name="Crows per Day" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
+Restart React
+```bash
+npm start
+```
+Open your browser and go to:
+```php
+http://raspberrypi.local:3000/
+```
+(Replace raspberrypi.local with your IP address or Raspberry Pi name in your local network.)
+
+You should see now
+* Daily Crow Chart 📊: Bars representing rooster crows per hour.
+* Weekly Crow Chart 📆: Bars showing total crows per day.
+### Adding 1-minute updates for auto-refresh
+Now we create versions of App.js. If you change this file, restart React as described before. I will not explain this step again and again.
+
+So, Auto-Refresh. Change App.js to
+```javescript
+import React, { useEffect, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
+
+function App() {
+  const [dailyCounts, setDailyCounts] = useState(null);
+  const [weeklyCounts, setWeeklyCounts] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        let dailyResponse = await fetch(`http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`);
+        let dailyData = await dailyResponse.json();
+
+        let sortedDailyData = Object.entries(dailyData)
+          .map(([hour, count]) => ({ hour: `${hour}:00`, count }))
+          .sort((a, b) => parseInt(a.hour) - parseInt(b.hour));
+
+        setDailyCounts(sortedDailyData);
+
+        let weeklyResponse = await fetch(`http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`);
+        let weeklyData = await weeklyResponse.json();
+
+        let formattedWeeklyData = Object.entries(weeklyData)
+          .map(([day, count]) => ({ day, count }));
+
+        setWeeklyCounts(formattedWeeklyData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchData();  // Initial fetch
+    const interval = setInterval(fetchData, 60000);  // Auto-refresh every 60s
+
+    return () => clearInterval(interval);  // Cleanup interval on unmount
+  }, []);
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h1>🐓 Rooster Crow Dashboard</h1>
+
+      {error && <p style={{ color: "red" }}>❌ Error: {error}</p>}
+
+      {/* DAILY CROW BAR CHART */}
+      <h2>📊 Daily Rooster Crows (Hour-wise)</h2>
+      {dailyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={dailyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#8884d8" name="Crows per Hour" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* WEEKLY CROW BAR CHART */}
+      <h2>📆 Weekly Rooster Crows (Day-wise)</h2>
+      {weeklyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={weeklyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="day" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#82ca9d" name="Crows per Day" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
+
+### Adding a Last 60-Minutes Bar Chart
+
+To add this, we need to: 
+* Modify Flask to provide minute-level rooster crow data
+* Create a new API endpoint /api/last_60_minutes_counts
+* Add a new bar chart to React
+#### Modify Flask
+We need an additional route added to the existing API endpoints in dashboard_backend.py
+```python
+from flask import Flask, jsonify, send_from_directory, make_response
+from flask_cors import CORS
+import sqlite3
+from datetime import datetime
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+DB_FILE = "classification_events.db"
+
+def query_db(query, args=(), one=False):
+    """Helper function to query SQLite database."""
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute(query, args)
+    result = cursor.fetchall()
+    conn.close()
+    return (result[0] if result else None) if one else result
+
+@app.route("/")
+def serve_dashboard():
+    """Serves the dashboard page."""
+    return send_from_directory(os.path.dirname(__file__), "dashboard.html")
+
+@app.route("/api/daily_counts")
+def daily_counts():
+    """Returns rooster crows per hour for the current day."""
+    query = """
+        SELECT strftime('%H', timestamp) AS hour, COUNT(*)
+        FROM events
+        WHERE label = 'rooster'
+          AND timestamp >= datetime('now', 'start of day')
+        GROUP BY hour
+        ORDER BY hour;
+    """
+    results = query_db(query)
+
+    response = make_response(jsonify({hour: count for hour, count in results}))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+@app.route("/api/weekly_counts")
+def weekly_counts():
+    """Returns rooster crows per day for the past 7 days."""
+    query = """
+        SELECT strftime('%Y-%m-%d', timestamp) AS day, COUNT(*)
+        FROM events
+        WHERE label = 'rooster'
+          AND timestamp >= date('now', '-6 days')
+        GROUP BY day
+        ORDER BY day;
+    """
+    results = query_db(query)
+
+    response = make_response(jsonify({day: count for day, count in results}))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+@app.route("/api/last_60_minutes_counts")
+def last_60_minutes_counts():
+    """Returns rooster crows for the last 60 minutes, grouped by minute."""
+    query = """
+        SELECT strftime('%M', timestamp) AS minute, COUNT(*)
+        FROM events
+        WHERE label = 'rooster' 
+          AND timestamp >= datetime('now', '-60 minutes')
+        GROUP BY minute
+        ORDER BY minute;
+    """
+    results = query_db(query)
+
+    # Ensure all 60 minutes are represented (fill missing ones with 0)
+    last_60_minutes = {str(i).zfill(2): 0 for i in range(60)}
+    for minute, count in results:
+        last_60_minutes[minute] = count
+
+    response = make_response(jsonify(last_60_minutes))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+```
+Restart flask
+```bash
+pkill -f dashboard_backend.py
+nohup python dashboard_backend.py > backend.log 2>&1 &
+```
+Test the API
+```bash
+http://raspberrypi.local:5000/api/last_60_minutes_counts
+```
+Expected outcome
+```json
+{
+  "00": 2,
+  "01": 0,
+  "02": 1,
+  "03": 3,
+  ...
+  "58": 5,
+  "59": 0
+}
+```
+
+#### New React script
+Replace your current App.js with this version:
+```javascript
+import React, { useEffect, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
+
+function App() {
+  const [dailyCounts, setDailyCounts] = useState(null);
+  const [weeklyCounts, setWeeklyCounts] = useState(null);
+  const [minuteCounts, setMinuteCounts] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch last 60-minute counts FIRST
+        let minuteResponse = await fetch(`http://raspberrypi.local:5000/api/last_60_minutes_counts?t=${Date.now()}`);
+        let minuteData = await minuteResponse.json();
+
+        let formattedMinuteData = Object.entries(minuteData)
+          .map(([minute, count], index) => ({
+            minute: `-${59 - index}`, // Convert to -1 to -59
+            count
+          }))
+          .sort((a, b) => parseInt(a.minute) - parseInt(b.minute)); // Ensure order is left (-59) → right (-1)
+
+        setMinuteCounts(formattedMinuteData);
+
+        // Fetch daily counts
+        let dailyResponse = await fetch(`http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`);
+        let dailyData = await dailyResponse.json();
+
+        let sortedDailyData = Object.entries(dailyData)
+          .map(([hour, count]) => ({ hour: `${hour}:00`, count }))
+          .sort((a, b) => parseInt(a.hour) - parseInt(b.hour));
+
+        setDailyCounts(sortedDailyData);
+
+        // Fetch weekly counts
+        let weeklyResponse = await fetch(`http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`);
+        let weeklyData = await weeklyResponse.json();
+
+        let formattedWeeklyData = Object.entries(weeklyData)
+          .map(([day, count]) => ({ day, count }));
+
+        setWeeklyCounts(formattedWeeklyData);
+
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, 60000);  // Auto-refresh every 60s
+
+    return () => clearInterval(interval);  // Cleanup interval on unmount
+  }, []);
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h1>🐓 Rooster Crow Dashboard</h1>
+
+      {error && <p style={{ color: "red" }}>❌ Error: {error}</p>}
+
+      {/* LAST 60 MINUTES BAR CHART */}
+<h2>⏳ Rooster Crows in Last 60 Minutes</h2>
+{minuteCounts ? (
+  <ResponsiveContainer width="100%" height={300}>
+    <BarChart data={minuteCounts} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
+      <XAxis 
+        dataKey="minute" 
+        label={{ value: "Minutes Ago", position: "insideBottom", dy: 20 }} // Adjust label placement
+      />
+      <YAxis />
+      <Tooltip />
+      <Legend verticalAlign="top" height={30} /> {/* Move legend up */}
+      <Bar dataKey="count" fill="#ffc658" name="Crows per Minute" />
+    </BarChart>
+  </ResponsiveContainer>
+) : (
+  <p>Loading...</p>
+)}
+
+
+      {/* DAILY CROW BAR CHART */}
+      <h2>📊 Daily Rooster Crows (Hour-wise)</h2>
+      {dailyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={dailyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#8884d8" name="Crows per Hour" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* WEEKLY CROW BAR CHART */}
+      <h2>📆 Weekly Rooster Crows (Day-wise)</h2>
+      {weeklyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={weeklyCounts} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <XAxis dataKey="day" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#82ca9d" name="Crows per Day" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
+Restart React 
+```bash
+npm start
+```
+and open in 
+```bash
+http://raspberrypi.local:3000/
+```
+## Adding a heat map view 
+### Step 1: Modify Flask to Return Data for the Heatmap
+
+We need a new API endpoint:
+📌 /api/heatmap_data → Returns rooster counts for every hour of the last 7 days.
+
+Add This Function to dashboard_backend.py
+
+Insert this below your existing API routes:
+
+```python
+@app.route("/api/heatmap_data")
+def heatmap_data():
+    """Returns rooster crows for each hour of the last 7 days (7x24 grid)."""
+    query = """
+        SELECT strftime('%Y-%m-%d', timestamp) AS day, strftime('%H', timestamp) AS hour, COUNT(*)
+        FROM events
+        WHERE label = 'rooster'
+          AND timestamp >= datetime('now', '-6 days', 'start of day')
+        GROUP BY day, hour
+        ORDER BY day, hour;
+    """
+    results = query_db(query)
+
+    # Initialize a full 7-day x 24-hour grid with 0 counts
+    from datetime import datetime, timedelta
+    last_7_days = [(datetime.utcnow() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(6, -1, -1)]
+    heatmap = {day: {str(h).zfill(2): 0 for h in range(24)} for day in last_7_days}
+
+    # Fill in available data
+    for day, hour, count in results:
+        heatmap[day][hour] = count
+
+    return jsonify(heatmap)
+```
+Replace your existing dashboard_backend.py with this version.
+* Restart Flask:
+```bash
+pkill -f dashboard_backend.py
+nohup python dashboard_backend.py > backend.log 2>&1 &
+```
+* Test the Heatmap API:
+```bash
+curl http://raspberrypi.local:5000/api/heatmap_data
+```
+
+It should look like
+```bash
+{
+   "2025-02-06": {
+    "00": 0,
+    "01": 0,
+    "02": 1,
+    "03": 0,
+    "04": 3,
+    "05": 23,
+    "06": 76,
+    "07": 48,
+    "08": 54,
+    "09": 33,
+    "10": 3,
+    "11": 51,
+    "12": 2,
+    "13": 53,
+    "14": 26,
+    "15": 0,
+    "16": 0,
+    "17": 0,
+    "18": 0,
+    "19": 0,
+    "20": 0,
+    "21": 0,
+    "22": 0,
+    "23": 0
+},
+  "2025-02-01": {
+    "00": 0,
+    "01": 0,
+...
+```
+### Step 2 Install the Heatmap Library in React
+
+Run this command inside your React project directory (rooster-dashboard):
+```bash
+npm install @visx/heatmap
+```
+📌 Why @visx/heatmap?
+* Lightweight & optimized for large data sets.
+* Works seamlessly with React.
+* Easily customizable.
+#### Version intermezzo 
+I got trouble as the heatmap requires React V18, I have installen V19.
+So there were some steps to be done
+Issue: @visx/heatmap is Incompatible with React 19
+The error occurs because @visx/heatmap only supports React 16, 17, or 18, but your project is using React 19.
+Solution: Install with --legacy-peer-deps
+
+Run the following command inside your React project directory (rooster-dashboard)
+```bash
+npm install @visx/heatmap --legacy-peer-deps
+```
+Probably @visx/scale has also to be installed in this directory.
+```bash
+npm install @visx/scale --legacy-peer-deps
+```
+
+Here is the final App.js file:
+```javascript
+import React, { useEffect, useState } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+
+function App() {
+  const [dailyCounts, setDailyCounts] = useState(null);
+  const [weeklyCounts, setWeeklyCounts] = useState(null);
+  const [minuteCounts, setMinuteCounts] = useState(null);
+  const [heatmapData, setHeatmapData] = useState(null);
+  const [error, setError] = useState(null);
+
+  // Fetch last 60-minute counts
+  useEffect(() => {
+    const fetchMinuteCounts = async () => {
+      try {
+        const response = await fetch(
+          `http://raspberrypi.local:5000/api/last_60_minutes_counts?t=${Date.now()}`
+        );
+        const data = await response.json();
+
+        const formattedData = Object.entries(data)
+          .map(([minute, count], index) => ({
+            // Create a label like "-59", "-58", ... "-0"
+            minute: `-${59 - index}`,
+            count,
+          }))
+          .sort((a, b) => parseInt(a.minute) - parseInt(b.minute));
+
+        setMinuteCounts(formattedData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchMinuteCounts();
+    const minuteInterval = setInterval(fetchMinuteCounts, 60000);
+    return () => clearInterval(minuteInterval);
+  }, []);
+
+  // Fetch daily counts
+  useEffect(() => {
+    const fetchDailyCounts = async () => {
+      try {
+        const response = await fetch(
+          `http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`
+        );
+        const data = await response.json();
+
+        const formattedData = Object.entries(data)
+          .map(([hour, count]) => ({
+            hour: `${hour}:00`,
+            count,
+          }))
+          .sort((a, b) => parseInt(a.hour) - parseInt(b.hour));
+
+        setDailyCounts(formattedData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchDailyCounts();
+    const dailyInterval = setInterval(fetchDailyCounts, 60000);
+    return () => clearInterval(dailyInterval);
+  }, []);
+
+  // Fetch weekly counts
+  useEffect(() => {
+    const fetchWeeklyCounts = async () => {
+      try {
+        const response = await fetch(
+          `http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`
+        );
+        const data = await response.json();
+
+        const formattedData = Object.entries(data).map(([day, count]) => ({
+          day,
+          count,
+        }));
+
+        setWeeklyCounts(formattedData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchWeeklyCounts();
+    const weeklyInterval = setInterval(fetchWeeklyCounts, 60000);
+    return () => clearInterval(weeklyInterval);
+  }, []);
+
+  // Fetch heatmap data
+  useEffect(() => {
+    const fetchHeatmapData = async () => {
+      try {
+        const response = await fetch(
+          `http://raspberrypi.local:5000/api/heatmap_data?t=${Date.now()}`
+        );
+        const data = await response.json();
+
+        // Sort the days chronologically and format each day as DD.MM.
+        const formattedData = Object.entries(data)
+          .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+          .map(([day, hours]) => {
+            const dateObj = new Date(day);
+            // Format day and month with leading zeros and a trailing dot
+            const dayFormatted = dateObj
+              .getDate()
+              .toString()
+              .padStart(2, "0");
+            const monthFormatted = (dateObj.getMonth() + 1)
+              .toString()
+              .padStart(2, "0");
+            return {
+              day: `${dayFormatted}.${monthFormatted}.`,
+              // Convert hourly data to bins sorted by hour
+              bins: Object.entries(hours)
+                .map(([hour, count]) => ({
+                  bin: parseInt(hour),
+                  count,
+                }))
+                .sort((a, b) => a.bin - b.bin),
+            };
+          });
+
+        setHeatmapData(formattedData);
+      } catch (error) {
+        setError(error.message);
+      }
+    };
+
+    fetchHeatmapData();
+    const heatmapInterval = setInterval(fetchHeatmapData, 60000);
+    return () => clearInterval(heatmapInterval);
+  }, []);
+
+  // --- Heatmap scaling adjustments ---
+  // Increase the tile width and container width by 30%
+  const heatmapScale = 1.3;
+  const tileWidth = 25 * heatmapScale; // originally 25px, now 32.5px
+  const xOffset = 50 * heatmapScale;     // originally 50px, now 65px
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h1>🐓 Rooster Crow Dashboard</h1>
+
+      {error && <p style={{ color: "red" }}>❌ Error: {error}</p>}
+
+      {/* LAST 60 MINUTES BAR CHART */}
+      <h2>⏳ Rooster Crows in Last 60 Minutes</h2>
+      {minuteCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={minuteCounts}
+            margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+          >
+            <XAxis
+              dataKey="minute"
+              label={{
+                value: "Minutes Ago",
+                position: "insideBottom",
+                dy: 40,
+              }}
+            />
+            <YAxis />
+            <Tooltip />
+            <Legend verticalAlign="top" />
+            <Bar dataKey="count" fill="#ffc658" name="Crows per Minute" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* DAILY CROW BAR CHART */}
+      <h2>📊 Daily Rooster Crows (Hour-wise)</h2>
+      {dailyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={dailyCounts}
+            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          >
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#8884d8" name="Crows per Hour" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* WEEKLY CROW BAR CHART */}
+      <h2>📆 Weekly Rooster Crows (Day-wise)</h2>
+      {weeklyCounts ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={weeklyCounts}
+            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          >
+            <XAxis dataKey="day" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#82ca9d" name="Crows per Day" />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p>Loading...</p>
+      )}
+
+      {/* HEATMAP CHART */}
+      <h2>🔥 Rooster Crow Heatmap (Last 7 Days x 24 Hours)</h2>
+      {heatmapData ? (
+        <div style={{ position: "relative", width: "910px", height: "300px" }}>
+          <svg width="910" height="260">
+            {/* Render heatmap tiles */}
+            {heatmapData.map((row, rowIndex) =>
+              row.bins.map((col) => {
+                // Scale opacity based on count (maxing out at 10 for full opacity)
+                const opacity = col.count ? Math.min(1, col.count / 10) : 0;
+                const fillColor =
+                  col.count === 0 ? "#cccccc" : `rgba(255, 0, 0, ${opacity})`;
+                return (
+                  <rect
+                    key={`${row.day}-${col.bin}`}
+                    x={col.bin * tileWidth + xOffset} // using the scaled tile width and offset
+                    y={rowIndex * 30 + 30}
+                    width={tileWidth}
+                    height={30}
+                    fill={fillColor}
+                    stroke="#fff"
+                  />
+                );
+              })
+            )}
+
+            {/* X-axis labels: Hours (0 to 23) */}
+            {Array.from({ length: 24 }).map((_, hour) => (
+              <text
+                key={hour}
+                x={hour * tileWidth + xOffset + tileWidth / 2}
+                y={250} // placed closer to the heatmap
+                fontSize={10}
+                textAnchor="middle"
+                fill="#000"
+              >
+                {hour}
+              </text>
+            ))}
+
+            {/* Y-axis labels: Dates in DD.MM. format */}
+            {heatmapData.map((row, rowIndex) => (
+              <text
+                key={row.day}
+                x={xOffset - 15} // position labels to the left of the heatmap tiles
+                y={rowIndex * 30 + 45}
+                fontSize={10}
+                textAnchor="end"
+                fill="#000"
+              >
+                {row.day}
+              </text>
+            ))}
+          </svg>
+
+          {/* Legend positioned below the SVG */}
+          <div
+            style={{
+              position: "absolute",
+              top: "270px",
+              left: `${xOffset}px`,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ fontSize: "12px", marginRight: "10px" }}>
+              Legend:
+            </span>
+            <div
+              style={{
+                background:
+                  "linear-gradient(to right, #cccccc, rgba(255, 0, 0, 1))",
+                width: "200px",
+                height: "10px",
+              }}
+            ></div>
+            <span style={{ fontSize: "12px", marginLeft: "10px" }}>
+              Max Crows
+            </span>
+          </div>
+        </div>
+      ) : (
+        <p>Loading...</p>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
 
 
 # Helpful hints and further support
