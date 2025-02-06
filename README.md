@@ -2728,6 +2728,17 @@ By default, nohup writes the output (both standard output and standard error) to
 nohup python trigger_audio_capture_V11_simpler.py > output.log 2>&1 &
 ```
 * > output.log: Redirects standard output to output.log.
+### Ensuring the background process continues running if ssh is terminated
+Sometimes nohup doesn't work correctly if it's not paired with proper detachment. 
+Ensure you're using it like this:
+```bash
+nohup npm start > react.log 2>&1 &
+```
+Then explicitly detach from the terminal by running:
+```bash
+disown
+```
+Only then close ssh connections.
 
 ### Ending the background process
 * Find the Process ID (PID)
