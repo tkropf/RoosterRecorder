@@ -7,12 +7,13 @@ A Raspberry Pi project to classify and track dedicated sound events - using a ro
 This is a toy project which has the following goals:
 * create a Raspberry Pi based device which automatically monitors, classifies and tracks dedicated sound events based on a lightweight AI approach
 * on a Raspberry Pi how to
-  * enable audio input and (automated recording)
+  * enable audio input and automated, tiggered recording
   * install a lightweight AI infrastructure
   * train and use AI
   * store relevant results in a database
-  * perform appealing ways to output the results
+  * perform appealing ways to output the results, easily accessible via a web page
 * on a metalevel, play with GPT4 etc. to see whether programming can be accelerated
+  * the answer is: massivley, to an almost frightening extend
 
 ## HW selection and OS installation
 ### HW
