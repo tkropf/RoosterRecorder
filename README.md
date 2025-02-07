@@ -2327,22 +2327,52 @@ function App() {
   const [heatmapData, setHeatmapData] = useState(null);
   const [error, setError] = useState(null);
 
-  // Fetch last 60-minute counts
+  // Use dynamic base URL for API calls based on the current hostname.
+  // When accessed from the Internet, window.location.hostname will be "kropf.selfhost.eu".
+  const baseUrl = `http://${window.location.hostname}:5000`;
+
+  // --- LAST 60 MINUTES BAR CHART ---
   useEffect(() => {
     const fetchMinuteCounts = async () => {
       try {
         const response = await fetch(
-          `http://raspberrypi.local:5000/api/last_60_minutes_counts?t=${Date.now()}`
+          `${baseUrl}/api/last_60_minutes_counts?t=${Date.now()}`
         );
         const data = await response.json();
 
-        const formattedData = Object.entries(data)
-          .map(([minute, count], index) => ({
-            // Create a label like "-59", "-58", ... "-0"
-            minute: `-${59 - index}`,
-            count,
-          }))
-          .sort((a, b) => parseInt(a.minute) - parseInt(b.minute));
+        // Sort the entries by key.
+        // If the keys are numeric (as strings), compare numerically.
+        // Otherwise, assume they are date strings and compare as Dates.
+        const sortedEntries = Object.entries(data).sort((a, b) => {
+          if (!isNaN(a[0]) && !isNaN(b[0])) {
+            return parseInt(a[0], 10) - parseInt(b[0], 10);
+          }
+          return new Date(a[0]) - new Date(b[0]);
+        });
+
+        const now = new Date();
+
+        // Ensure we have exactly 60 entries.
+        // If the API returns fewer than 60, pad with 0.
+        const counts = [];
+        for (let i = 0; i < 60; i++) {
+          if (i < sortedEntries.length) {
+            counts.push(sortedEntries[i][1]);
+          } else {
+            counts.push(0);
+          }
+        }
+
+        // Map the counts to an array of objects with a time label computed relative to "now."
+        // The first entry corresponds to 59 minutes ago and the last to the current minute.
+        const formattedData = counts.map((count, index) => {
+          const minuteTime = new Date(now.getTime() - (59 - index) * 60000);
+          const label = minuteTime.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          return { minute: label, count };
+        });
 
         setMinuteCounts(formattedData);
       } catch (error) {
@@ -2351,43 +2381,48 @@ function App() {
     };
 
     fetchMinuteCounts();
-    const minuteInterval = setInterval(fetchMinuteCounts, 60000);
-    return () => clearInterval(minuteInterval);
-  }, []);
+    const interval = setInterval(fetchMinuteCounts, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, [baseUrl]);
 
-  // Fetch daily counts
+  // --- DAILY (HOURLY) BAR CHART ---
   useEffect(() => {
     const fetchDailyCounts = async () => {
       try {
         const response = await fetch(
-          `http://raspberrypi.local:5000/api/daily_counts?t=${Date.now()}`
+          `${baseUrl}/api/daily_counts?t=${Date.now()}`
         );
         const data = await response.json();
 
-        const formattedData = Object.entries(data)
-          .map(([hour, count]) => ({
-            hour: `${hour}:00`,
-            count,
-          }))
-          .sort((a, b) => parseInt(a.hour) - parseInt(b.hour));
-
-        setDailyCounts(formattedData);
+        // Create an array for all 24 hours with a default count of 0.
+        const hourlyCounts = Array.from({ length: 24 }, (_, hour) => ({
+          hour: `${hour}:00`,
+          count: 0,
+        }));
+        // Update with actual counts from the API.
+        Object.entries(data).forEach(([hour, count]) => {
+          const h = parseInt(hour, 10);
+          if (!isNaN(h) && h >= 0 && h < 24) {
+            hourlyCounts[h] = { hour: `${h}:00`, count };
+          }
+        });
+        setDailyCounts(hourlyCounts);
       } catch (error) {
         setError(error.message);
       }
     };
 
     fetchDailyCounts();
-    const dailyInterval = setInterval(fetchDailyCounts, 60000);
-    return () => clearInterval(dailyInterval);
-  }, []);
+    const interval = setInterval(fetchDailyCounts, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, [baseUrl]);
 
-  // Fetch weekly counts
+  // --- WEEKLY BAR CHART ---
   useEffect(() => {
     const fetchWeeklyCounts = async () => {
       try {
         const response = await fetch(
-          `http://raspberrypi.local:5000/api/weekly_counts?t=${Date.now()}`
+          `${baseUrl}/api/weekly_counts?t=${Date.now()}`
         );
         const data = await response.json();
 
@@ -2403,16 +2438,16 @@ function App() {
     };
 
     fetchWeeklyCounts();
-    const weeklyInterval = setInterval(fetchWeeklyCounts, 60000);
-    return () => clearInterval(weeklyInterval);
-  }, []);
+    const interval = setInterval(fetchWeeklyCounts, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, [baseUrl]);
 
-  // Fetch heatmap data
+  // --- HEATMAP CHART ---
   useEffect(() => {
     const fetchHeatmapData = async () => {
       try {
         const response = await fetch(
-          `http://raspberrypi.local:5000/api/heatmap_data?t=${Date.now()}`
+          `${baseUrl}/api/heatmap_data?t=${Date.now()}`
         );
         const data = await response.json();
 
@@ -2421,17 +2456,13 @@ function App() {
           .sort((a, b) => new Date(a[0]) - new Date(b[0]))
           .map(([day, hours]) => {
             const dateObj = new Date(day);
-            // Format day and month with leading zeros and a trailing dot
-            const dayFormatted = dateObj
-              .getDate()
-              .toString()
-              .padStart(2, "0");
+            const dayFormatted = dateObj.getDate().toString().padStart(2, "0");
             const monthFormatted = (dateObj.getMonth() + 1)
               .toString()
               .padStart(2, "0");
             return {
               day: `${dayFormatted}.${monthFormatted}.`,
-              // Convert hourly data to bins sorted by hour
+              // Convert hourly data to bins sorted by hour.
               bins: Object.entries(hours)
                 .map(([hour, count]) => ({
                   bin: parseInt(hour),
@@ -2448,15 +2479,15 @@ function App() {
     };
 
     fetchHeatmapData();
-    const heatmapInterval = setInterval(fetchHeatmapData, 60000);
-    return () => clearInterval(heatmapInterval);
-  }, []);
+    const interval = setInterval(fetchHeatmapData, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, [baseUrl]);
 
   // --- Heatmap scaling adjustments ---
-  // Increase the tile width and container width by 30%
+  // Increase width by 30%: container and SVG width, plus scale the tile width and offset.
   const heatmapScale = 1.3;
-  const tileWidth = 25 * heatmapScale; // originally 25px, now 32.5px
-  const xOffset = 50 * heatmapScale;     // originally 50px, now 65px
+  const tileWidth = 25 * heatmapScale; // originally 25px, now scaled (e.g., 32.5px)
+  const xOffset = 50 * heatmapScale;
 
   return (
     <div style={{ padding: "20px" }}>
@@ -2474,11 +2505,7 @@ function App() {
           >
             <XAxis
               dataKey="minute"
-              label={{
-                value: "Minutes Ago",
-                position: "insideBottom",
-                dy: 40,
-              }}
+              label={{ value: "Time", position: "insideBottom", dy: 40 }}
             />
             <YAxis />
             <Tooltip />
@@ -2543,7 +2570,7 @@ function App() {
                 return (
                   <rect
                     key={`${row.day}-${col.bin}`}
-                    x={col.bin * tileWidth + xOffset} // using the scaled tile width and offset
+                    x={col.bin * tileWidth + xOffset}
                     y={rowIndex * 30 + 30}
                     width={tileWidth}
                     height={30}
@@ -2559,7 +2586,7 @@ function App() {
               <text
                 key={hour}
                 x={hour * tileWidth + xOffset + tileWidth / 2}
-                y={250} // placed closer to the heatmap
+                y={250} // Placed just below the heatmap tiles
                 fontSize={10}
                 textAnchor="middle"
                 fill="#000"
@@ -2572,7 +2599,7 @@ function App() {
             {heatmapData.map((row, rowIndex) => (
               <text
                 key={row.day}
-                x={xOffset - 15} // position labels to the left of the heatmap tiles
+                x={xOffset - 15}
                 y={rowIndex * 30 + 45}
                 fontSize={10}
                 textAnchor="end"
@@ -2617,6 +2644,7 @@ function App() {
 }
 
 export default App;
+
 ```
 
 ### running the React server in the background
