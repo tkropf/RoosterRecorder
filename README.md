@@ -92,7 +92,7 @@ pcm.!default {
     card 2
     device 0
 }
-
+ 
 ctl.!default {
     type hw
     card 2
