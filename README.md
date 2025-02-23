@@ -2687,6 +2687,248 @@ Kill the process:
 ```
 Replace <PID> with the actual process ID.
 
+# Manual Step-by-Step Activation of the Rooster Crow Monitoring System
+
+This guide provides a structured approach to manually starting the Rooster Crow Monitoring System before automating it with `systemd`.
+
+In the following your see (some of) the concrete directories I used, with the user "verwalter": 
+* ~/programming : this is were my python scripts and sub-directories are located
+* ~/programming/rooster-dashboard : this is where the React stuff is
+* ~/rooster_ai_classified : this is the location of the Crow *.wav files stored as "forensic evidence" - if activated in the script
+* ~/noise_ai_classified : same for the noise *.wav files
+* ~/recorded_events : for training all *.wav files of sounds beyond a certain threshold are stored
+* ~/rooster : the location of the manually sorted *.wav files of the crows
+* ~/noise : same for the noise *.wav files
+---
+
+## Step 1: Activate the Virtual Environment
+To ensure all dependencies are available, activate the Python virtual environment:
+```bash
+cd /home/verwalter/programming  # Navigate to your project directory
+source myenv/bin/activate       # Activate the virtual environment
+```
+
+---
+
+## Step 2: Start the AI Classifier
+The AI classifier listens for crowing sounds and logs detected events into the database:
+```bash
+python ai_audio_classifier.py -r > ai_audio_classifier.log 2>&1 &
+```
+- `-r`: (if required) Runs real-time classification.
+- `&`: Runs the process in the background.
+- Logs are saved to `ai_audio_classifier.log`.
+
+### Verify it's running:
+```bash
+tail -f ai_audio_classifier.log  # View live logs
+```
+
+---
+
+## Step 3: Start the Flask API
+The Flask server provides API endpoints for data retrieval:
+```bash
+python flask_server.py > flask_server.log 2>&1 &
+```
+- Flask should be configured with `host='0.0.0.0'` for remote access.
+- Logs are stored in `flask_server.log`.
+
+### Verify Flask is running:
+```bash
+curl http://localhost:5000/api/daily_counts
+```
+If the response contains JSON data, the API is working correctly.
+
+---
+
+## Step 4: Start the React Dashboard
+The dashboard visualizes crowing data from the Flask API:
+```bash
+cd /home/verwalter/rooster-dashboard  # Navigate to React project
+npm start
+```
+
+### Verify the dashboard is working:
+- Open a web browser and go to:  
+  `http://localhost:3000`  
+  *(Replace `localhost` with your Raspberry Pi's IP if accessing from another device.)*
+
+---
+
+## Final Checks
+- ✅ **AI Classifier is Running:** `tail -f ai_audio_classifier.log`
+- ✅ **Flask API is Accessible:** `curl http://localhost:5000/api/daily_counts`
+- ✅ **React Dashboard is Visible:** Open `http://localhost:3000` in a browser.
+
+✅ **Once this manual process is tested and stable, we can proceed with setting up `systemd` for automation.**
+
+# Automating the Rooster Crow Monitoring System with systemd
+
+This guide provides steps to automate the Rooster Crow Monitoring System using `systemd`, ensuring that all required services start automatically after a reboot.
+
+---
+
+## Step 1: Enable systemd User Services
+To ensure systemd services start at boot **without user login**, enable lingering:
+
+```bash
+loginctl enable-linger $USER
+```
+
+Verify lingering is enabled:
+```bash
+loginctl show-user $USER | grep Linger
+```
+✅ Expected output:
+```
+Linger=yes
+```
+
+---
+
+## Step 2: Create systemd Services
+
+### **AI Audio Classifier Service**
+Create the service file:
+```bash
+nano ~/.config/systemd/user/ai_audio_classifier.service
+```
+
+Paste the following:
+```ini
+[Unit]
+Description=AI Audio Classifier Service (User)
+After=default.target
+
+[Service]
+WorkingDirectory=/home/verwalter/programming
+ExecStart=/bin/bash -c 'source /home/verwalter/programming/myenv/bin/activate && exec python -u ai_audio_classifier.py -r'
+Restart=always
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"
+
+[Install]
+WantedBy=default.target
+```
+Save and exit (`CTRL+X → Y → Enter`).
+
+Enable and start the service:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable ai_audio_classifier
+systemctl --user start ai_audio_classifier
+```
+Check status:
+```bash
+systemctl --user status ai_audio_classifier
+```
+
+---
+
+### **Flask API Service**
+Create the service file:
+```bash
+nano ~/.config/systemd/user/flask_server.service
+```
+
+Paste:
+```ini
+[Unit]
+Description=Flask API Service (User)
+After=default.target
+
+[Service]
+WorkingDirectory=/home/verwalter/programming
+ExecStart=/bin/bash -c 'source /home/verwalter/programming/myenv/bin/activate && exec python -u dashboard_backend.py'
+Restart=always
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+```
+Save and exit.
+
+Enable and start:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable flask_server
+systemctl --user start flask_server
+```
+Check status:
+```bash
+systemctl --user status flask_server
+```
+
+---
+
+### **React Dashboard Service**
+Create the service file:
+```bash
+nano ~/.config/systemd/user/react_dashboard.service
+```
+
+Paste:
+```ini
+[Unit]
+Description=React Dashboard Service (User)
+After=default.target
+
+[Service]
+WorkingDirectory=/home/verwalter/programming/rooster-dashboard
+ExecStart=/usr/bin/npm start
+Restart=always
+Environment=PATH=/usr/bin:/home/verwalter/.nvm/versions/node/v16.13.0/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+```
+Save and exit.
+
+Enable and start:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable react_dashboard
+systemctl --user start react_dashboard
+```
+Check status:
+```bash
+systemctl --user status react_dashboard
+```
+
+---
+
+## Step 3: Verify Everything Works After Reboot
+Restart the Raspberry Pi:
+```bash
+sudo reboot
+```
+After reboot, check if all services are running:
+```bash
+systemctl --user status ai_audio_classifier
+systemctl --user status flask_server
+systemctl --user status react_dashboard
+```
+✅ **Expected result:** Each service should show `Active: active (running)`.
+
+---
+
+## Step 4: Check Logs for Troubleshooting
+View live logs:
+```bash
+journalctl --user -u ai_audio_classifier --no-pager --follow
+journalctl --user -u flask_server --no-pager --follow
+journalctl --user -u react_dashboard --no-pager --follow
+```
+
+---
+
+## ✅ **Your Rooster Crow Monitoring System is Now Fully Automated!** 🚀🐓📊
+
+
 
 
 # Helpful hints and further support
