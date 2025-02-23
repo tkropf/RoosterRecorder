@@ -106,17 +106,6 @@ Then run the Flask API or AI classifier.
 - **System Dependencies** → Install via `apt install`
 - **Virtual Environment** → Always activate before running scripts
 
----
-
-🚀 **Your Rooster Recorder System is now fully set up and ready to go!** 🐓📊
-
-
-
-
-
-
-
-
 
 ## HW selection and OS installation
 ### HW
@@ -126,6 +115,9 @@ I decided to go for a Raspberry 5 with 8GB RAM without a dedicated HW accelerato
 * and 8GB LPDDR4X-4267 SDRAM
 
 In addition we need a microphone. I went with the cheapest USB microphone I could get. Which was called "Yosoo Helath Gear USB MINI microphone" and is barely more than the USB 2.0 connector plus a half-circle shaped piece of plastic. 
+This is how it looks like:
+![USB Microphone](images/USB-Mic.jpg)
+
 
 ### SW installation
 I installed a plain Raspberry Pi OS with desktop. Desktop just in case, I completely went headleass. 
