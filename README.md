@@ -16,8 +16,14 @@ This is a toy project which has the following goals:
   * the answer is: massivley, to an almost frightening extend
 # TL;DR
 
-At the end we do have a Raspberry Pi running the following scripts given in the next section. All of them are in the repository. 
+At the end we do have a Raspberry Pi running the  scripts given in the next section. All of them are in the repository in the src directory. 
+If everything works, then opening a browser and typing (substitute raspberyypi with your respective network name or IP address)
+```bash
+http://raspberrypi:3000/
+```
+shows you this dashboard:
 
+<img src="pictures/Rooster-Dashboard.jpeg" alt="Rooster Dashboard" width="700">
 
 ## Overview of All Scripts
 Here is a brief explanation of all key scripts used in this project. 
@@ -116,7 +122,8 @@ I decided to go for a Raspberry 5 with 8GB RAM without a dedicated HW accelerato
 
 In addition we need a microphone. I went with the cheapest USB microphone I could get. Which was called "Yosoo Helath Gear USB MINI microphone" and is barely more than the USB 2.0 connector plus a half-circle shaped piece of plastic. 
 This is how it looks like:
-![USB Microphone](/pictures/USB-Mic.jpg)
+
+<img src="pictures/USB-Mic.jpeg" alt="USB-Mikrofon" width="200">
 
 
 ### SW installation
