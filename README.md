@@ -14,6 +14,109 @@ This is a toy project which has the following goals:
   * perform appealing ways to output the results, easily accessible via a web page
 * on a metalevel, play with GPT4 etc. to see whether programming can be accelerated
   * the answer is: massivley, to an almost frightening extend
+# TL;DR
+
+At the end we do have a Raspberry Pi running the following scripts given in the next section. All of them are in the repository. 
+
+
+## Overview of All Scripts
+Here is a brief explanation of all key scripts used in this project. 
+Caveat: without understanding what you do just copying them to a Raspberry Pi will not work. You have to 
+
+### **Audio Processing & Classification**
+- **`test_audio_device.py`**: Tests the available audio hardware.
+- **`trigger_audio_capture.py`**: Records sound snippets above a certain threshold and saves them in `recorded_events/`. These `.wav` files are later copied to a Mac for manual sorting.
+- **`sort_recordings_mac_variable_speed.py`**: Runs on a Mac to help sort sound snippets into `noise/` and `rooster/` directories. The `-speed` flag adjusts the playback speed for faster sorting. The sorted files are then copied back to the Raspberry Pi.
+- **`extract_features.py`**: Extracts features from the audio samples in `noise/` and `rooster/`, creating a `features.csv` file.
+- **`train_classifier.py`**: Trains an AI model using `features.csv` and outputs `rooster_classifier.pkl`.
+- **`ai_audio_classifier.py`**: Uses the trained model to classify new events, storing them in `classification_events.db` and saving `.wav` files in `rooster_ai_classified/` and `noise_ai_classified/` (if the `-r` and/or `-n` flags are set).
+
+### **Dashboard & Visualization**
+- **`dashboard_backend.py`**: Flask service that serves data for visualization in the browser.
+- **`App.js`**: The React component that connects the frontend to the Flask API. Located in `rooster-dashboard/src/`.
+
+## 🛠 Required Python Libraries
+
+Install all necessary Python libraries using:
+
+```bash
+pip install sounddevice scipy numpy librosa sklearn flask flask-cors sqlite3 argparse pickle
+```
+
+
+### 📌 **Breakdown by Functionality**
+
+| Library        | Purpose |
+|---------------|---------|
+| `sounddevice` | Audio recording and playback |
+| `scipy`       | Audio file handling (`wav.write()`) |
+| `numpy`       | Audio processing, buffer handling |
+| `librosa`     | Audio feature extraction (MFCCs) |
+| `sklearn`     | Machine learning (RandomForestClassifier) |
+| `flask`       | API backend to serve the React dashboard |
+| `flask-cors`  | Allow cross-origin requests (for React frontend) |
+| `sqlite3`     | Store classified events in a database |
+| `argparse`    | Handle command-line arguments (`-r`, `-n` flags) |
+| `pickle`      | Save and load the trained AI model |
+
+---
+
+## 🔧 System Dependencies
+
+Ensure the following **system packages** are installed:
+
+### **For Audio Recording & Processing**
+```bash
+sudo apt install portaudio19-dev pulseaudio alsa-utils
+```
+| Package            | Purpose |
+|--------------------|---------|
+| `portaudio19-dev` | Required for `sounddevice` to work |
+| `pulseaudio`      | Manages sound input/output |
+| `alsa-utils`      | Provides `arecord -L` for listing sound devices |
+
+---
+
+### **For Flask API & React Dashboard**
+```bash
+sudo apt install python3-venv nodejs npm
+```
+| Package        | Purpose |
+|---------------|---------|
+| `python3-venv` | Virtual environment support |
+| `nodejs` & `npm` | Required for React dashboard |
+
+---
+
+## 📌 Additional Setup
+
+After installing the dependencies, **activate the virtual environment** before running any scripts:
+
+```bash
+source ~/programming/myenv/bin/activate
+```
+
+Then run the Flask API or AI classifier.
+
+---
+
+## ✅ Summary
+
+- **Python Libraries** → Install via `pip install -r requirements.txt`
+- **System Dependencies** → Install via `apt install`
+- **Virtual Environment** → Always activate before running scripts
+
+---
+
+🚀 **Your Rooster Recorder System is now fully set up and ready to go!** 🐓📊
+
+
+
+
+
+
+
+
 
 ## HW selection and OS installation
 ### HW
